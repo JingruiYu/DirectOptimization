@@ -86,7 +86,12 @@ public:
         }
         else
         {
-            _error ( 0,0 ) = getPixelValue ( x,y ) - _measurement;
+            float tmpPixel = getPixelValue ( x,y );
+            if (tmpPixel < 0.5)
+                this->setLevel ( 1 );
+            
+            _error ( 0,0 ) = tmpPixel - _measurement;
+
         }
     }
 
@@ -141,12 +146,16 @@ public:
 
 protected:
     // get a gray scale value from reference image (bilinear interpolated)
-    inline float getPixelValue ( float x, float y )
+    inline float getPixelValue ( float y, float x )
     {
         int xx = int(x);
         int yy = int(y);
-        float colorscale = float (image_.at<cv::Vec3b>(y,x)[0] + image_.at<cv::Vec3b>(y,x)[1] + image_.at<cv::Vec3b>(y,x)[2]);
-
+        float grayscale = float (image_.at<cv::Vec3b>(x,y)[0] + image_.at<cv::Vec3b>(x-1,y+1)[0]
+                                + image_.at<cv::Vec3b>(x-2,y)[0] + image_.at<cv::Vec3b>(x+2,y)[2] 
+                                + image_.at<cv::Vec3b>(x,y-2)[0] + image_.at<cv::Vec3b>(x,y+2)[2] 
+                                + image_.at<cv::Vec3b>(x,y-2)[0] + image_.at<cv::Vec3b>(x,y+2)[2] 
+                                + image_.at<cv::Vec3b>(x+1,y+1)[0] + image_.at<cv::Vec3b>(x-1,y-1)[2]
+                                + image_.at<cv::Vec3b>(x+1,y)[0] + image_.at<cv::Vec3b>(x,y+1)[2] );
         return colorscale;
     }
 public:
@@ -155,6 +164,7 @@ public:
     cv::Mat image_;    // reference image
 };
 
+// 从边缘线图上获得膨化后的结果图
 void getContour(cv::Mat &original, cv::Mat &dst)
 {
     vector<cv::Point2f> vPoint;
@@ -220,7 +230,7 @@ int main(int argc, char const *argv[])
 	string strFile = string(argv[1])+"/associate.txt";
 	LoadDataset(strFile, vstrImageFilenames, vstrBirdviewFilenames, vstrBirdviewMaskFilenames, vstrBirdviewICPFilenames, vstrBirdviewICPWriteFilenames, vodomPose, vTimestamps);
 
-    
+    // 用于调用边缘线图的预处理
     // for (size_t i = 0; i < vstrBirdviewICPFilenames.size(); i++)
     // {
     //     cv::Mat original = cv::imread(string(argv[1])+"/"+vstrBirdviewICPFilenames[i], CV_LOAD_IMAGE_UNCHANGED);
@@ -260,9 +270,9 @@ int main(int argc, char const *argv[])
 		/******* Get KeyPoint *******/
 		if ( i == 0 )
         {
-            for (int x = 0; x < color.rows; x++)
+            for (int x = 3; x < color.rows-3; x++)
             {
-                for (int y = 0; y < color.cols; y++)
+                for (int y = 3; y < color.cols-3; y++)
                 {
                     if (original.at<uchar>(x,y) > 10)
                     {
@@ -272,12 +282,18 @@ int main(int argc, char const *argv[])
                         int t2 = color.at<cv::Vec3b>(x,y)[1];
                         int t3 = color.at<cv::Vec3b>(x,y)[2];
 
-                        float grayscale = float (color.at<cv::Vec3b>(x,y)[0] + color.at<cv::Vec3b>(x,y)[1] + color.at<cv::Vec3b>(x,y)[2]);
+                        float grayscale = float (color.at<cv::Vec3b>(x,y)[0] + color.at<cv::Vec3b>(x-1,y+1)[0]
+                                                + color.at<cv::Vec3b>(x-2,y)[0] + color.at<cv::Vec3b>(x+2,y)[2] 
+                                                + color.at<cv::Vec3b>(x,y-2)[0] + color.at<cv::Vec3b>(x,y+2)[2] 
+                                                + color.at<cv::Vec3b>(x,y-2)[0] + color.at<cv::Vec3b>(x,y+2)[2] 
+                                                + color.at<cv::Vec3b>(x+1,y+1)[0] + color.at<cv::Vec3b>(x-1,y-1)[2]
+                                                + color.at<cv::Vec3b>(x+1,y)[0] + color.at<cv::Vec3b>(x,y+1)[2] );
                         measurements.push_back ( Measurement ( p3d, grayscale ) );
                     }
                 }
             }
             
+            // 原本线图获取边缘点的方式
             // // select the pixels with high gradiants 
             // for ( int x=10; x<color.cols-10; x++ )
             //     for ( int y=10; y<color.rows-10; y++ )
