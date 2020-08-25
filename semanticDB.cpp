@@ -33,7 +33,8 @@ struct Measurement
 };
 
 void LoadDataset(const string &strFile, vector<string> &vstrImageFilenames, vector<string> &vstrBirdviewFilenames, 
-                vector<string> &vstrBirdviewMaskFilenames, vector<cv::Vec3d> &vodomPose, vector<double> &vTimestamps);
+                vector<string> &vstrBirdviewMaskFilenames, vector<string> &vstrBirdviewICPFilenames, 
+                vector<string> &vstrBirdviewICPWriteFilenames, vector<cv::Vec3d> &vodomPose, vector<double> &vTimestamps);
 
 inline Eigen::Vector3d project2Dto3D ( int x, int y, float fx, float fy, float cx, float cy )
 {
@@ -154,6 +155,51 @@ public:
     cv::Mat image_;    // reference image
 };
 
+void getContour(cv::Mat &original, cv::Mat &dst)
+{
+    vector<cv::Point2f> vPoint;
+    int count = 0;
+    for (int row = 0; row < original.rows; row++)
+    {
+        for (int col = 0; col < original.cols; col++)
+        {
+            if (original.at<uchar>(row,col) > 10)
+            {
+                count++;
+                cv::Point2f pt;
+                pt.x = row;
+                pt.y = col;
+                vPoint.push_back(pt);
+            }
+        }
+    }
+
+    cout << "count: " << count << endl;
+
+    dst.create(original.size(),CV_8UC3);
+    for (int row = 0; row < original.rows; row++)
+    {
+        for (int col = 0; col < original.cols; col++)
+        {
+            float mindis = 9999;
+            for (int n = 0; n < count; n++)
+            {
+                cv::Point2f pt = vPoint[n];
+                float dis = sqrt( (pt.x-row)*(pt.x-row) + (pt.y-col)*(pt.y-col));
+                // cout << "pt: " << pt << endl << "row: " << row << " col: " << col << " dis: " << dis << endl;
+                if (dis < mindis)
+                    mindis = dis;                    
+            }
+
+            float th = 10;
+            
+            float pixel = 255.0 * exp( - mindis*mindis / (2*th*th) );
+            dst.at<cv::Vec3b>(row,col)[0] = pixel; 
+            dst.at<cv::Vec3b>(row,col)[1] = pixel;
+            dst.at<cv::Vec3b>(row,col)[2] = pixel;
+        }
+    }
+}
 
 int main(int argc, char const *argv[])
 {
@@ -167,18 +213,37 @@ int main(int argc, char const *argv[])
 	vector<string> vstrImageFilenames;
     vector<string> vstrBirdviewFilenames;
     vector<string> vstrBirdviewMaskFilenames;
+    vector<string> vstrBirdviewICPFilenames;
+    vector<string> vstrBirdviewICPWriteFilenames;
     vector<double> vTimestamps;
     vector<cv::Vec3d> vodomPose;
 	string strFile = string(argv[1])+"/associate.txt";
-	LoadDataset(strFile, vstrImageFilenames, vstrBirdviewFilenames, vstrBirdviewMaskFilenames, vodomPose, vTimestamps);
+	LoadDataset(strFile, vstrImageFilenames, vstrBirdviewFilenames, vstrBirdviewMaskFilenames, vstrBirdviewICPFilenames, vstrBirdviewICPWriteFilenames, vodomPose, vTimestamps);
+
+    
+    // for (size_t i = 0; i < vstrBirdviewICPFilenames.size(); i++)
+    // {
+    //     cv::Mat original = cv::imread(string(argv[1])+"/"+vstrBirdviewICPFilenames[i], CV_LOAD_IMAGE_UNCHANGED);
+    //     if ( original.data==nullptr)
+    //         cout << "there are empty ...: " << vstrBirdviewICPFilenames[i] << endl;
+        
+    //     cv::Mat dst;
+    //     getContour(original,dst);
+
+    //     cv::imwrite(string(argv[1])+"/"+vstrBirdviewICPWriteFilenames[i],dst);
+
+    // }
+    
 
 	Eigen::Isometry3d Tcw = Eigen::Isometry3d::Identity();
-    cv::Mat prev_gray, prev_color, color, gray;
+    cv::Mat prev_gray, prev_color, color, gray, original;
     vector<Measurement> measurements;
-	for (int i = 0; i < vstrBirdviewFilenames.size(); i++)
+	for (int i = 0; i < 5; i++)
 	{
-		color = cv::imread(string(argv[1])+"/"+vstrBirdviewFilenames[i], CV_LOAD_IMAGE_UNCHANGED);
-        if ( color.data==nullptr)
+		color = cv::imread(string(argv[1])+"/"+vstrBirdviewICPWriteFilenames[i], CV_LOAD_IMAGE_UNCHANGED);
+        original = cv::imread(string(argv[1])+"/"+vstrBirdviewICPFilenames[i], CV_LOAD_IMAGE_UNCHANGED);
+        
+        if ( color.data==nullptr || original.data==nullptr)
             continue;
 
         double correction = 1.7;
@@ -195,44 +260,62 @@ int main(int argc, char const *argv[])
 		/******* Get KeyPoint *******/
 		if ( i == 0 )
         {
-            // select the pixels with high gradiants 
-            for ( int x=10; x<color.cols-10; x++ )
-                for ( int y=10; y<color.rows-10; y++ )
+            for (int x = 0; x < color.rows; x++)
+            {
+                for (int y = 0; y < color.cols; y++)
                 {
-                    // Eigen::Vector2d delta (
-                    //     gray.ptr<uchar>(y)[x+1] - gray.ptr<uchar>(y)[x-1], 
-                    //     gray.ptr<uchar>(y+1)[x] - gray.ptr<uchar>(y-1)[x]
-                    // );
-                    
-                    Eigen::Vector2d delta (
-                        (color.at<cv::Vec3b>(y,x+1)[0] + color.at<cv::Vec3b>(y,x+1)[1] + color.at<cv::Vec3b>(y,x+1)[2])
-                      - (color.at<cv::Vec3b>(y,x-1)[0] + color.at<cv::Vec3b>(y,x-1)[1] + color.at<cv::Vec3b>(y,x-1)[2]), 
-                        (color.at<cv::Vec3b>(y+1,x)[0] + color.at<cv::Vec3b>(y+1,x)[1] + color.at<cv::Vec3b>(y+1,x)[2])
-                      - (color.at<cv::Vec3b>(y-1,x)[0] + color.at<cv::Vec3b>(y-1,x)[1] + color.at<cv::Vec3b>(y-1,x)[2])
-                    );
-                    if ( delta.norm() < 50 )
-                        continue;
-                    
-                    Eigen::Vector3d p3d = project2Dto3D ( x, y, fx, fy, cx, cy );
-                    // float grayscale = float ( gray.ptr<uchar> (y) [x] );
-                    float grayscale = float (color.at<cv::Vec3b>(y,x)[0] + color.at<cv::Vec3b>(y,x)[1] + color.at<cv::Vec3b>(y,x)[2]);
-                    measurements.push_back ( Measurement ( p3d, grayscale ) );	
+                    if (original.at<uchar>(x,y) > 10)
+                    {
+                        Eigen::Vector3d p3d = project2Dto3D ( y, x, fx, fy, cx, cy );
+                        // float grayscale = float ( gray.ptr<uchar> (y) [x] );
+                        int t1 = color.at<cv::Vec3b>(x,y)[0];
+                        int t2 = color.at<cv::Vec3b>(x,y)[1];
+                        int t3 = color.at<cv::Vec3b>(x,y)[2];
+
+                        float grayscale = float (color.at<cv::Vec3b>(x,y)[0] + color.at<cv::Vec3b>(x,y)[1] + color.at<cv::Vec3b>(x,y)[2]);
+                        measurements.push_back ( Measurement ( p3d, grayscale ) );
+                    }
                 }
+            }
+            
+            // // select the pixels with high gradiants 
+            // for ( int x=10; x<color.cols-10; x++ )
+            //     for ( int y=10; y<color.rows-10; y++ )
+            //     {
+            //         // Eigen::Vector2d delta (
+            //         //     gray.ptr<uchar>(y)[x+1] - gray.ptr<uchar>(y)[x-1], 
+            //         //     gray.ptr<uchar>(y+1)[x] - gray.ptr<uchar>(y-1)[x]
+            //         // );
+                    
+            //         Eigen::Vector2d delta (
+            //             (color.at<cv::Vec3b>(y,x+1)[0] + color.at<cv::Vec3b>(y,x+1)[1] + color.at<cv::Vec3b>(y,x+1)[2])
+            //           - (color.at<cv::Vec3b>(y,x-1)[0] + color.at<cv::Vec3b>(y,x-1)[1] + color.at<cv::Vec3b>(y,x-1)[2]), 
+            //             (color.at<cv::Vec3b>(y+1,x)[0] + color.at<cv::Vec3b>(y+1,x)[1] + color.at<cv::Vec3b>(y+1,x)[2])
+            //           - (color.at<cv::Vec3b>(y-1,x)[0] + color.at<cv::Vec3b>(y-1,x)[1] + color.at<cv::Vec3b>(y-1,x)[2])
+            //         );
+            //         if ( delta.norm() < 50 )
+            //             continue;
+                    
+            //         Eigen::Vector3d p3d = project2Dto3D ( x, y, fx, fy, cx, cy );
+            //         // float grayscale = float ( gray.ptr<uchar> (y) [x] );
+            //         float grayscale = float (color.at<cv::Vec3b>(y,x)[0] + color.at<cv::Vec3b>(y,x)[1] + color.at<cv::Vec3b>(y,x)[2]);
+            //         measurements.push_back ( Measurement ( p3d, grayscale ) );	
+            //     }
             prev_color = color.clone();
             cout<<"add total "<<measurements.size()<<" measurements."<<endl;
-            continue;
+        
         }
 
-		/******* Cal Pose *******/
-		chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
+        /******* Cal Pose *******/
+        chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
         poseEstimationDirect( measurements, color, K, Tcw ); // TODO
         chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
         chrono::duration<double> time_used = chrono::duration_cast<chrono::duration<double>> ( t2-t1 );
         cout<<"direct method costs time: "<<time_used.count() <<" seconds."<<endl;
         cout<<"Tcw="<<Tcw.matrix() <<endl;
 
-		/******* Drawer Points *******/
-		cv::Mat img_show ( color.rows*2, color.cols, CV_8UC3 );
+        /******* Drawer Points *******/
+        cv::Mat img_show ( color.rows*2, color.cols, CV_8UC3 );
         prev_color.copyTo ( img_show ( cv::Rect ( 0,0,color.cols, color.rows ) ) );
         color.copyTo ( img_show ( cv::Rect ( 0,color.rows,color.cols, color.rows ) ) );
         for ( Measurement m:measurements )
@@ -269,7 +352,9 @@ int main(int argc, char const *argv[])
 
 
 void LoadDataset(const string &strFile, vector<string> &vstrImageFilenames, vector<string> &vstrBirdviewFilenames, 
-                vector<string> &vstrBirdviewMaskFilenames, vector<cv::Vec3d> &vodomPose, vector<double> &vTimestamps)
+                vector<string> &vstrBirdviewMaskFilenames, vector<string> &vstrBirdviewICPFilenames,
+                vector<string> &vstrBirdviewICPWriteFilenames,
+                vector<cv::Vec3d> &vodomPose, vector<double> &vTimestamps)
 {
     ifstream f;
     f.open(strFile.c_str());
@@ -290,9 +375,11 @@ void LoadDataset(const string &strFile, vector<string> &vstrImageFilenames, vect
             ss>>x>>y>>theta;
             vodomPose.push_back(cv::Vec3d(x,y,theta));
             ss >> image;
-            vstrImageFilenames.push_back("image/"+image);
-            vstrBirdviewFilenames.push_back("contour/"+image);
-            vstrBirdviewMaskFilenames.push_back("mask/"+image);
+            vstrImageFilenames.push_back("image/"+image+".jpg");
+            vstrBirdviewFilenames.push_back("contour/"+image+".jpg");
+            vstrBirdviewMaskFilenames.push_back("mask/"+image+".jpg");
+            vstrBirdviewICPFilenames.push_back("contourICP/"+image+".jpg");
+            vstrBirdviewICPWriteFilenames.push_back("contourICPWrite/"+image+".bmp");
         }
     }
     // double t0=vTimestamps[0];
