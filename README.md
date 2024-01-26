@@ -1,14 +1,17 @@
 # DirectOptimization
 
-## 用途
-测试使用直接法优化使用边缘信息进行位姿估计的程序；
+DirectOptimization is a repository dedicated to testing the optimization of pose estimation using edge information through direct methods.
 
-## Requirement
-### OpenCV
-### Eigen3
-### G2O 
-所用的是ORB里的第三方库，需要在CMAKE中进行配置
+## Requirements
 
-## 输入
-是具有associattion的数据集
- 
+The following libraries are required for the operation of the programs in this repository:
+
+- OpenCV
+- Eigen3
+- G2O
+
+These are third-party libraries used in ORB, and need to be configured in CMAKE.
+
+## Input
+
+The input for the programs in this repository is a dataset with associations.
